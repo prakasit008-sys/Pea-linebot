@@ -1,120 +1,186 @@
-from flask import Flask, request
+# bot.py
+import os
+import re
+from flask import Flask, request, abort
+
 from linebot import LineBotApi, WebhookHandler
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
 from linebot.exceptions import InvalidSignatureError
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
-app = Flask(__name__)
+# =========================
+# 1) Config จาก ENV
+# =========================
+CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
 
-CHANNEL_ACCESS_TOKEN = "r1l17imGiTgC2yPacumh5xXN8onhFSR7V2NHnr73P7riAyZ28VcIJI0SoY5Iy02qS5+THUAdX+d0RR0ncCG92W1aPFSxDnGtcCO5877YLPOwzXZ+qwXtFPOXaY9vqf5VDpQSpoTp/nZGc/vl9eGb3QdB04t89/1O/w1cDnyilFU="
-CHANNEL_SECRET = "9e09aa8e611cb1ffab566246286242da"
+if not CHANNEL_ACCESS_TOKEN or not CHANNEL_SECRET:
+    # กันพังแบบเงียบ ๆ เวลา token/secret ไม่ถูกตั้งค่า
+    print("ERROR: Missing LINE_CHANNEL_ACCESS_TOKEN or LINE_CHANNEL_SECRET in environment variables.")
 
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
 
-@app.route("/callback", methods=['POST'])
+app = Flask(__name__)
+
+
+# =========================
+# 2) Helper: ทำวันที่/เวลาแบบไทยง่าย ๆ (ไม่บังคับ)
+# =========================
+def normalize_spaces(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def build_help() -> str:
+    return (
+        "วิธีใช้บอท PEA AI Voice\n"
+        "พิมพ์ข้อความธรรมดาได้เลย เช่น:\n"
+        "• ดับไฟ พรุ่งนี้ 09:00-11:00 บ้านหนอง... ซอย...\n"
+        "• ไฟกลับ เวลา 14:20 ตลาด...\n"
+        "• ขัดข้อง สายขาด หน้าโรงเรียน...\n\n"
+        "คำสั่ง:\n"
+        "• /help หรือ /menu = ดูวิธีใช้\n"
+        "• /test = ข้อความตัวอย่าง\n"
+    )
+
+
+def build_template_outage(detail: str) -> str:
+    return (
+        "📣 ประกาศการไฟฟ้าส่วนภูมิภาค\n"
+        "เรื่อง แจ้งดับกระแสไฟฟ้าเพื่อปฏิบัติงาน\n\n"
+        f"รายละเอียด:\n{detail}\n\n"
+        "ขออภัยในความไม่สะดวก\n"
+        "☎ โทร 1129"
+    )
+
+
+def build_template_restore(detail: str) -> str:
+    return (
+        "✅ ประกาศการไฟฟ้าส่วนภูมิภาค\n"
+        "เรื่อง แจ้งจ่ายกระแสไฟฟ้าคืน\n\n"
+        f"รายละเอียด:\n{detail}\n\n"
+        "ขออภัยในความไม่สะดวก\n"
+        "☎ โทร 1129"
+    )
+
+
+def build_template_emergency(detail: str) -> str:
+    return (
+        "🚨 ประกาศการไฟฟ้าส่วนภูมิภาค\n"
+        "เรื่อง แจ้งเหตุขัดข้องระบบไฟฟ้า\n\n"
+        f"รายละเอียด:\n{detail}\n\n"
+        "เจ้าหน้าที่กำลังเร่งดำเนินการแก้ไข\n"
+        "ขออภัยในความไม่สะดวก\n"
+        "☎ โทร 1129"
+    )
+
+
+# =========================
+# 3) Core: ตรวจประเภทข้อความแล้วจัดประกาศ
+# =========================
+OUTAGE_KEYWORDS = ["ดับไฟ", "ไฟดับ", "ตัดไฟ", "งดจ่ายไฟ", "ดับกระแส"]
+RESTORE_KEYWORDS = ["ไฟกลับ", "จ่ายไฟ", "จ่ายกระแส", "ไฟมาแล้ว", "คืนกระแส"]
+EMERGENCY_KEYWORDS = ["ขัดข้อง", "เหตุขัดข้อง", "ฉุกเฉิน", "สายขาด", "หม้อแปลง", "ไฟตก", "ไฟกระพริบ"]
+
+
+def classify_message(text: str) -> str:
+    """
+    return: 'outage' | 'restore' | 'emergency' | 'unknown'
+    """
+    t = text.lower()
+
+    def hit(words):
+        return any(w in t for w in words)
+
+    # ให้ outage สำคัญสุด ถ้าพิมพ์มีคำว่า "ดับไฟ"
+    if hit(OUTAGE_KEYWORDS):
+        return "outage"
+
+    # restore
+    if hit(RESTORE_KEYWORDS):
+        return "restore"
+
+    # emergency
+    if hit(EMERGENCY_KEYWORDS):
+        return "emergency"
+
+    return "unknown"
+
+
+def format_announcement(user_text: str) -> str:
+    detail = normalize_spaces(user_text)
+
+    kind = classify_message(detail)
+
+    if kind == "outage":
+        return build_template_outage(detail)
+    if kind == "restore":
+        return build_template_restore(detail)
+    if kind == "emergency":
+        return build_template_emergency(detail)
+
+    # unknown
+    return (
+        "พิมพ์ข้อความให้บอทช่วยจัดประกาศได้เลย เช่น:\n"
+        "• ดับไฟ พรุ่งนี้ 09:00-11:00 บ้านหนอง...\n"
+        "• ไฟกลับ เวลา 14:20 ตลาด...\n"
+        "• ขัดข้อง สายขาด หน้าโรงเรียน...\n\n"
+        "หรือพิมพ์ /help"
+    )
+
+
+# =========================
+# 4) LINE Webhook Endpoint
+# =========================
+@app.route("/callback", methods=["POST"])
 def callback():
-    signature = request.headers['X-Line-Signature']
+    signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
 
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
-        return 'Invalid signature', 400
+        abort(400)
 
-    return 'OK'
-
-import re
-
-def build_announce(d):
-    # จัดข้อความประกาศให้อ่านชัด (พร้อมเอาไปแปะทำเสียง)
-    return (
-        "ประกาศจากการไฟฟ้าส่วนภูมิภาค\n"
-        "ขอแจ้งงดจ่ายกระแสไฟฟ้าชั่วคราว เพื่อปรับปรุงระบบจำหน่ายไฟฟ้า\n\n"
-        f"วันที่ {d.get('date','-')}\n"
-        f"เวลา {d.get('time','-')}\n"
-        f"พื้นที่ {d.get('area','-')}\n"
-        f"สาเหตุ {d.get('reason','-')}\n\n"
-        f"ขออภัยในความไม่สะดวก\n"
-        f"สอบถามเพิ่มเติม โทร {d.get('phone','1129')}"
-    )
-
-def parse_fireout(text):
-    # รองรับ 2 แบบ:
-    # 1) แบบบรรทัด:
-    # /ไฟดับ
-    # วันที่=10 ก.พ. 2569
-    # เวลา=09:00-12:00
-    # พื้นที่=หมู่ 3 บ้านคลอง
-    # สาเหตุ=ปรับปรุงระบบ
-    # โทร=1129
-    #
-    # 2) แบบบรรทัดเดียว:
-    # /5555555555555555
+    return "OK"
 
 
-    if not text.strip().startswith("/ไฟดับ"):
-        return None
-
-    raw = text.replace("/ไฟดับ", "", 1).strip()
-
-    # แปลง ; เป็นขึ้นบรรทัด เพื่อ parse ง่าย
-    raw = raw.replace(";", "\n")
-
-    d = {}
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if "=" in line:
-            k, v = line.split("=", 1)
-            k = k.strip()
-            v = v.strip()
-            if k in ["วันที่", "date"]:
-                d["date"] = v
-            elif k in ["เวลา", "time"]:
-                d["time"] = v
-            elif k in ["พื้นที่", "area"]:
-                d["area"] = v
-            elif k in ["สาเหตุ", "เหตุผล", "reason"]:
-                d["reason"] = v
-            elif k in ["โทร", "phone"]:
-                d["phone"] = v
-    return d
-
+# =========================
+# 5) Event Handler
+# =========================
 @handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
-    text = event.message.text.strip()
+def on_text_message(event: MessageEvent):
+    text = (event.message.text or "").strip()
 
-    # ===== กรณีไฟดับ =====
-    if "ดับไฟ" in text or "ไฟดับ" in text:
-        reply = f"""📣 ประกาศการไฟฟ้าส่วนภูมิภาค
+    # คำสั่งสั้น ๆ
+    if text.lower() in ["/help", "/menu", "help", "เมนู", "วิธีใช้"]:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=build_help())
+        )
+        return
 
-แจ้งดับกระแสไฟฟ้า
-รายละเอียด:
-{text}
+    if text.lower() in ["/test", "ทดสอบ", "ตัวอย่าง"]:
+        demo = (
+            "ลองพิมพ์แบบนี้:\n"
+            "1) ดับไฟ พรุ่งนี้ 09:00-11:00 บ้านหนองขาม ซอย 3\n"
+            "2) ไฟกลับ เวลา 14:20 ตลาดเทศบาล\n"
+            "3) ขัดข้อง สายขาด หน้าโรงเรียนวัด...\n"
+        )
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=demo))
+        return
 
-ขออภัยในความไม่สะดวก
-☎ โทร 1129"""
-        
-        return TextSendMessage(text=reply)
+    # โหมดหลัก: จัดประกาศอัตโนมัติ
+    reply_text = format_announcement(text)
 
-    # ===== กรณีไฟกลับ =====
-    if "ไฟกลับ" in text:
-        reply = f"""✅ ประกาศการไฟฟ้าส่วนภูมิภาค
-
-ขณะนี้จ่ายกระแสไฟฟ้าได้ตามปกติ
-รายละเอียด:
-{text}
-
-ขออภัยในความไม่สะดวก
-☎ โทร 1129"""
-
-        return TextSendMessage(text=reply)
-
-    # ===== ถ้าไม่เข้าเงื่อนไข =====
-    return TextSendMessage(
-        text="พิมพ์ข้อความเช่น:\nดับไฟ พรุ่งนี้ 9-11 ตลาดหน้าอำเภอ"
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=reply_text)
     )
 
 
-
+# =========================
+# 6) Run (สำหรับรัน local)
+# =========================
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port)
