@@ -57,11 +57,12 @@ def on_text_message(event):
     # ข้อความอื่น
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text='พิมพ์ "ไฟดับ" เพื่อดูประกาศ หรือพิมพ์ "ver" เช็คเวอร์ชัน')
+        TextSendMessage(text='พิมพ์ "ไฟดับ" เพื่อดูประกาศ หรือกดที่เมนู "สร้างเสียงAI" ทำเสียงAIประกาศ')
     )
 
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
+
 
