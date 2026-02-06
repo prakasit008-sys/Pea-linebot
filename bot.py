@@ -10,17 +10,12 @@ def on_text_message(event):
             "⏰ เวลา 09:00 - 11:00 น.\n"
             "📍 พื้นที่ บ้านหนองขาม ซอย 3\n"
             "ขออภัยในความไม่สะดวก\n"
-            "☎ โทร 032604280 1129"
+            "☎ โทร 1129"
         )
-
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=reply)
-        )
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
         return
 
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text="พิมพ์คำว่า ไฟดับ เพื่อดูประกาศ")
+        TextSendMessage(text='พิมพ์คำว่า "ไฟดับ" เพื่อดูประกาศ')
     )
-
