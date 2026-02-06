@@ -33,8 +33,10 @@ button{
 
 <h2>สร้างเสียงประกาศ</h2>
 
-<textarea id="text">
-ประกาศการดับไฟเพื่อปฏิบัติงาน
+<textarea id="text"></textarea>
+<script>
+const templates = {
+  outage: `ประกาศการดับไฟเพื่อปฏิบัติงาน
 
 การไฟฟ้าส่วนภูมิภาคจังหวัดประจวบคีรีขันธ์
 จะดำเนินการปรับปรุงระบบจำหน่ายไฟฟ้า
@@ -46,5 +48,32 @@ button{
 จึงมีความจำเป็นต้องดับกระแสไฟฟ้าชั่วคราว
 หากดำเนินการแล้วเสร็จก่อนกำหนด จะจ่ายไฟทันที
 
-ขออภัยในความไม่สะดวก
+ขออภัยในความไม่สะดวก`,
 
+  restore: `ประกาศจากการไฟฟ้าส่วนภูมิภาค
+ขณะนี้ได้จ่ายกระแสไฟฟ้าคืนแล้ว
+พื้นที่ ..................
+เมื่อเวลา ..................
+ขออภัยในความไม่สะดวก`,
+
+  emergency: `ประกาศจากการไฟฟ้าส่วนภูมิภาค
+ขณะนี้เกิดเหตุขัดข้องในพื้นที่ ..................
+เจ้าหน้าที่กำลังเร่งแก้ไข
+ขออภัยในความไม่สะดวก`,
+
+  custom: `พิมพ์ข้อความประกาศของคุณที่นี่...`
+};
+
+const url = new URL(window.location.href);
+const mode = url.searchParams.get("mode") || "outage";
+document.getElementById("text").value = templates[mode] || templates.outage;
+
+// ฟังก์ชันเดิมของคุณ (ถ้ามีแล้วให้คงไว้)
+function copyText(){
+  navigator.clipboard.writeText(document.getElementById("text").value);
+  alert("คัดลอกข้อความแล้ว");
+}
+function openTTS(){
+  window.open("https://www.minimax.io/audio/text-to-speech");
+}
+</script>
