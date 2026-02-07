@@ -130,6 +130,7 @@ def minimax_t2a_sync(text: str, voice_id: str) -> bytes:
         "model": "speech-2.8-hd",
         "text": _clean_text_for_tts(text),
         "stream": False,
+        "language_boost": "Thai",
         "voice_setting": {
             "voice_id": voice_id,
             "speed": 1,
@@ -311,4 +312,5 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
+
 
