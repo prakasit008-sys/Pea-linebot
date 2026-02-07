@@ -80,18 +80,15 @@ def callback():
 
     return "OK", 200
 
-# ====== Message Handler ======
+# ===== Message Handler =====
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_text = (event.message.text or "").strip()
 
-           def handle_message(event):
-    user_text = (event.message.text or "").strip()
-
-    # ทำเสียง AI
+    # ✅ ตอบเฉพาะ: ทำเสียงAI
     if user_text == "ทำเสียงAI":
         reply_text = (
-            "🔊 ทำเสียง AI อัตโนมัติ\n"
+            "🔊 ทำเสียง AI อัตโนมัติ (Text to Speech)\n"
             "กดลิงก์นี้ได้เลย:\n"
             f"{TTS_LINK}"
         )
@@ -101,7 +98,7 @@ def handle_message(event):
         )
         return
 
-    # ประกาศดับไฟ
+    # ✅ ตอบเฉพาะ: ดับไฟ
     if user_text == "ดับไฟ":
         today = thai_date(datetime.now())
         reply_text = build_outage_template(today)
@@ -111,13 +108,11 @@ def handle_message(event):
         )
         return
 
-    # อย่างอื่นไม่ตอบ
+    # ❌ อย่างอื่นไม่ตอบ
     return
 
 
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+
 
 
 
