@@ -133,9 +133,9 @@ def minimax_t2a_sync(text: str, voice_id: str) -> bytes:
         "language_boost": "Thai",
         "voice_setting": {
             "voice_id": voice_id,
-            "speed": 1,
-            "vol": 1,
-            "pitch": 0
+            "speed": 0.9,
+            "vol": 1.2,
+            "pitch": -1
         },
         "audio_setting": {
             "audio_sample_rate": 32000,
@@ -312,6 +312,7 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
