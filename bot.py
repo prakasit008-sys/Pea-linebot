@@ -83,12 +83,13 @@ def handle_message(event):
         )
 
     else:
-        reply_text = "ทำเสียงAI"
+        reply_text = "AI"
 
     line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text=reply_text)
     )
+
 
 
 
