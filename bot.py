@@ -252,7 +252,7 @@ def handle_message(event):
                 return
 
             lines = []
-            for i, v in enumerate(voices[:100], 1):
+            for i, v in enumerate(voices[:50], 1):
                 vid = v.get("voice_id") or v.get("id") or v.get("voiceId")
                 name = v.get("name") or v.get("voice_name") or v.get("title")
                 lines.append(f"{i}. {name}\nvoice_id: {vid}")
@@ -312,6 +312,7 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
