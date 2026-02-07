@@ -85,19 +85,32 @@ def callback():
 def handle_message(event):
     user_text = (event.message.text or "").strip()
 
-    # ---- คำสั่ง: ทำเสียงAI ----
-    if user_text == "AI" or "AI" in user_text:
+       # ✅ ตอบเฉพาะ: ทำเสียงAI
+    if user_text == "ทำเสียงAI":
         reply_text = (
             "🔊 ทำเสียง AI อัตโนมัติ (Text to Speech)\n"
             "กดลิงก์นี้ได้เลย:\n"
-            f"{TTS_LINK}\n\n"
-            "✅ ทริค: คัดลอกข้อความประกาศจากบอท แล้วไปวางในเว็บเพื่อสร้างเสียง"
+            f"{TTS_LINK}"
         )
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reply_text)
+        )
+        return
 
-    # ---- คำสั่ง: ประกาศดับไฟ (วันนี้) ----
-    elif user_text in ["ดับไฟ", "ประกาศดับไฟ", "outage"]:
+    # ✅ ตอบเฉพาะ: ดับไฟ
+    if user_text == "ดับไฟ":
         today = thai_date(datetime.now())
         reply_text = build_outage_template(today)
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=reply_text)
+        )
+        return
+
+    # ❌ อย่างอื่นไม่ตอบ
+    return
+
 
     # ---- คำสั่ง: ประกาศดับไฟ (พรุ่งนี้) ----
     elif user_text in ["ดับไฟพรุ่งนี้", "ประกาศดับไฟพรุ่งนี้", "outage tomorrow"]:
@@ -139,6 +152,7 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
