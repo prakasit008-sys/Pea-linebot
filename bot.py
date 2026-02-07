@@ -71,7 +71,7 @@ def handle_message(event):
     user_text = (event.message.text or "").strip()
 
     # --- ทำเสียง AI ---
-    if user_text == "ทำเสียงAI":
+    if user_text == "AI":
         reply_text = (
             "🔊 ทำเสียง AI อัตโนมัติ\n"
             "กดลิงก์นี้ได้เลย:\n"
@@ -102,3 +102,4 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
