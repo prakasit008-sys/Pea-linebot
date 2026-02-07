@@ -13,42 +13,40 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
 app = Flask(__name__)
 
-# =============================
-# LINE
-# =============================
+# ===== LINE TOKEN =====
 CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
-
-if not CHANNEL_ACCESS_TOKEN or not CHANNEL_SECRET:
-    print("⚠️ LINE_CHANNEL_ACCESS_TOKEN / LINE_CHANNEL_SECRET ยังไม่ถูกตั้งค่าใน ENV")
-
 line_bot_api = LineBotApi(CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(CHANNEL_SECRET)
 
-# =============================
-# BASE URL (โดเมนเว็บบอทของคุณ เช่น https://xxx.onrender.com)
-# ใช้ส่งลิงก์ไฟล์ mp3 กลับไปใน LINE
-# =============================
+# ===== BASE URL (ใช้ส่งลิงก์ไฟล์กลับไป) =====
 BASE_URL = os.getenv("BASE_URL", "").rstrip("/")
 
-# =============================
-# MiniMax
-# =============================
+# ===== MiniMax =====
 MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
 MINIMAX_GROUP_ID = os.getenv("MINIMAX_GROUP_ID", "")
 
-# ✅ voice_id ที่ใช้งานจริง (ต้องเป็น ID จริง ไม่ใช่ชื่อ)
-# ตั้งได้ด้วย ENV หรือใช้ /setvoice ใน LINE
-VOICE_ID = os.getenv("VOICE_ID", "").strip()
-
-# โฟลเดอร์เก็บไฟล์ mp3 ชั่วคราวบน Render
+# โฟลเดอร์เก็บไฟล์ชั่วคราวบน Render
 AUDIO_DIR = "/tmp/audio"
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
-# =============================
-# รูปแบบประกาศดับไฟ (ตามที่คุณให้มา)
-# =============================
-def build_outage_template():
+# ===== เก็บค่า voice_id ที่ผู้ใช้ตั้งไว้ (แบบง่าย: in-memory) =====
+# หมายเหตุ: ถ้า Render restart ค่าอาจหาย (แต่ใช้งานจริงได้ก่อน)
+USER_VOICE = {}  # user_id -> voice_id
+
+# ===== ฟังก์ชันวันที่ไทย =====
+THAI_MONTHS = [
+    "", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน",
+    "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม",
+    "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+]
+
+def thai_date(d):
+    year_th = d.year + 543
+    return f"{d.day} {THAI_MONTHS[d.month]} {year_th}"
+
+def build_outage_template(_date_text: str):
+    # ใช้ “ประกาศดับไฟ” ตามที่คุณส่งมา
     return (
         "📢 งานดับไฟแผนกปฏิบัติการ\n\n"
         "📅 วันพฤหัสบดีที่ 12 กุมภาพันธ์ 2569\n"
@@ -64,32 +62,32 @@ def build_outage_template():
         "📍 ดับตั้งแต่ สวนขวัญ ตลาดนัดสวนขวัญ โรงนมสวนขวัญ และปั้ม PT"
     )
 
-# =============================
-# Routes
-# =============================
+# ===== Route: เช็คเซิร์ฟเวอร์ =====
 @app.route("/", methods=["GET"])
 def home():
     return "OK", 200
 
+# ===== Route: เสิร์ฟไฟล์เสียง =====
 @app.route("/audio/<filename>", methods=["GET"])
 def serve_audio(filename):
     return send_from_directory(AUDIO_DIR, filename, as_attachment=True)
 
+# ===== LINE CALLBACK =====
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature")
     body = request.get_data(as_text=True)
-
     try:
         handler.handle(body, signature)
     except InvalidSignatureError:
         abort(400)
-
     return "OK"
 
-# =============================
-# MiniMax helpers
-# =============================
+
+# =========================
+# ===== MiniMax helpers =====
+# =========================
+
 def _minimax_headers():
     if not MINIMAX_API_KEY:
         raise RuntimeError("MINIMAX_API_KEY not set")
@@ -98,25 +96,29 @@ def _minimax_headers():
         "Content-Type": "application/json",
     }
 
-def minimax_create_task(text: str) -> str:
+def minimax_get_voice_list() -> dict:
+    # ตามที่คุณขอ
+    url = "https://api.minimax.io/v1/get_voice"
+    payload = {"voice_type": "all"}
+    r = requests.post(url, headers=_minimax_headers(), json=payload, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+def minimax_create_task(text: str, voice_id: str, model: str = "speech-2.8-hd") -> str:
     """
-    สร้าง task TTS
+    สร้างงาน TTS แบบ async
+    - ถ้าเสียงผิด / เครดิตไม่พอ จะ raise พร้อมข้อความจาก base_resp
     """
     if not MINIMAX_GROUP_ID:
         raise RuntimeError("MINIMAX_GROUP_ID not set")
 
-    # ❗ต้องมี VOICE_ID ที่ถูกต้อง
-    if not VOICE_ID:
-        raise RuntimeError("VOICE_ID ยังว่าง -> พิมพ์ /voices แล้วใช้ /setvoice <voice_id>")
-
     url = f"https://api.minimax.io/v1/t2a_async_v2?GroupId={MINIMAX_GROUP_ID}"
-
     payload = {
-        "model": "speech-2.8-hd",
+        "model": model,
         "text": text,
         "language_boost": "auto",
         "voice_setting": {
-            "voice_id": VOICE_ID,
+            "voice_id": voice_id,
             "speed": 1,
             "vol": 10,
             "pitch": 1
@@ -133,18 +135,27 @@ def minimax_create_task(text: str) -> str:
     r.raise_for_status()
     data = r.json()
 
-    task_id = data.get("task_id") or data.get("data", {}).get("task_id")
-    if not task_id or str(task_id) == "0":
+    # ✅ สำคัญ: อ่าน base_resp ก่อน
+    base_resp = data.get("base_resp") if isinstance(data, dict) else None
+    if isinstance(base_resp, dict):
+        status_code = base_resp.get("status_code", 0)
+        status_msg = base_resp.get("status_msg", "")
+        if status_code and status_code != 0:
+            # status_code 1008 = insufficient balance
+            raise RuntimeError(f"MiniMax error {status_code}: {status_msg}")
+
+    task_id = data.get("task_id") or (data.get("data", {}).get("task_id") if isinstance(data.get("data"), dict) else None)
+    if not task_id:
         raise RuntimeError(f"Cannot find task_id in response: {data}")
 
     return str(task_id)
 
 def minimax_poll_file_id(task_id: str, timeout_sec: int = 180) -> str:
-    """
-    รอจนได้ file_id
-    """
     url = f"https://api.minimax.io/v1/query/t2a_async_query_v2?task_id={task_id}"
-    headers = {"Authorization": f"Bearer {MINIMAX_API_KEY}", "content-type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {MINIMAX_API_KEY}",
+        "Content-Type": "application/json",
+    }
 
     start = time.time()
     while time.time() - start < timeout_sec:
@@ -152,10 +163,18 @@ def minimax_poll_file_id(task_id: str, timeout_sec: int = 180) -> str:
         r.raise_for_status()
         data = r.json()
 
+        # ✅ ถ้ามี base_resp ผิด ก็ฟ้อง
+        base_resp = data.get("base_resp") if isinstance(data, dict) else None
+        if isinstance(base_resp, dict):
+            status_code = base_resp.get("status_code", 0)
+            status_msg = base_resp.get("status_msg", "")
+            if status_code and status_code != 0:
+                raise RuntimeError(f"MiniMax query error {status_code}: {status_msg}")
+
         file_id = (
             data.get("file_id")
-            or data.get("data", {}).get("file_id")
-            or data.get("data", {}).get("result", {}).get("file_id")
+            or (data.get("data", {}).get("file_id") if isinstance(data.get("data"), dict) else None)
+            or (data.get("data", {}).get("result", {}).get("file_id") if isinstance(data.get("data"), dict) and isinstance(data["data"].get("result"), dict) else None)
         )
         if file_id:
             return str(file_id)
@@ -165,43 +184,33 @@ def minimax_poll_file_id(task_id: str, timeout_sec: int = 180) -> str:
     raise TimeoutError("MiniMax TTS timeout while waiting for file_id")
 
 def minimax_download_mp3(file_id: str) -> bytes:
+    """
+    ✅ แก้ปัญหา “ไฟล์ชื่อ .mp3 แต่ข้างในไม่ใช่เสียง”
+    - ถ้า Content-Type ไม่ใช่ audio/* จะ raise
+    """
     url = f"https://api.minimax.io/v1/files/retrieve_content?file_id={file_id}"
     headers = {
         "Authorization": f"Bearer {MINIMAX_API_KEY}",
     }
-
     r = requests.get(url, headers=headers, timeout=120)
     r.raise_for_status()
 
-    # เช็คว่าเป็นเสียงจริง
-    content_type = r.headers.get("Content-Type", "")
+    content_type = (r.headers.get("Content-Type") or "").lower()
     if "audio" not in content_type:
-        raise RuntimeError("Downloaded content is not audio")
+        # ช่วย debug: ตัดข้อความบางส่วนกลับไปให้เห็นว่าได้อะไรมาแทน
+        preview = r.text[:500] if r.text else ""
+        raise RuntimeError(f"Downloaded content is not audio (Content-Type={content_type}). Preview: {preview}")
 
     return r.content
 
 
-# ==========================================================
-# ✅ 1) ฟังก์ชันที่คุณสั่งให้ใส่ (Get Voice List)
-# วางต่อจาก minimax_download_mp3(...) ตามที่คุณต้องการ
-# ==========================================================
-def minimax_get_voice_list() -> dict:
-    url = "https://api.minimax.io/v1/get_voice"
-    headers = {
-        "Authorization": f"Bearer {MINIMAX_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {"voice_type": "all"}  # เอาทุกประเภท
-    r = requests.post(url, headers=headers, json=payload, timeout=60)
-    r.raise_for_status()
-    return r.json()
+# =========================
+# ===== Background TTS =====
+# =========================
 
-# =============================
-# Background job: สร้างเสียงแล้ว push ลิงก์ไฟล์
-# =============================
-def tts_background_job(user_id: str, text: str):
+def tts_background_job(user_id: str, text: str, voice_id: str):
     try:
-        task_id = minimax_create_task(text)
+        task_id = minimax_create_task(text=text, voice_id=voice_id, model="speech-2.8-hd")
         file_id = minimax_poll_file_id(task_id, timeout_sec=180)
         mp3_bytes = minimax_download_mp3(file_id)
 
@@ -211,37 +220,74 @@ def tts_background_job(user_id: str, text: str):
             f.write(mp3_bytes)
 
         if not BASE_URL:
-            msg = (
-                "✅ ทำเสียงเสร็จแล้ว 🎧\n"
-                f"แต่ยังไม่ได้ตั้ง BASE_URL จึงส่งลิงก์ไม่ได้\n"
-                f"(ไฟล์อยู่ที่เซิร์ฟเวอร์ชื่อ {fname})"
-            )
+            msg = f"✅ ทำเสียงเสร็จแล้ว แต่ยังไม่ได้ตั้ง BASE_URL จึงส่งลิงก์ไม่ได้ (ไฟล์ชื่อ {fname})"
         else:
             dl_url = f"{BASE_URL}/audio/{fname}"
-            msg = f"✅ ทำเสียงเสร็จแล้ว 🎧\nดาวน์โหลดไฟล์: {dl_url}"
+            msg = f"✅ ทำเสียงเสร็จแล้ว 🎧\nดาวน์โหลดไฟล์ MP3: {dl_url}"
 
         line_bot_api.push_message(user_id, TextSendMessage(text=msg))
 
     except Exception as e:
         line_bot_api.push_message(user_id, TextSendMessage(text=f"❌ ทำเสียงไม่สำเร็จ: {e}"))
 
-# =============================
-# LINE handler
-# =============================
+
+# =========================
+# ===== LINE Message =======
+# =========================
+
+def _get_user_id(event):
+    return getattr(event.source, "user_id", None)
+
+def _help_text():
+    return (
+        "📌 คำสั่งที่ใช้ได้\n"
+        "1) ดับไฟ  → ส่งข้อความประกาศดับไฟ\n"
+        "2) เสียง <ข้อความ> → สร้างไฟล์เสียง MP3\n"
+        "3) /voices → ดูรายการเสียง 10 รายการแรก\n"
+        "4) /setvoice <voice_id> → ตั้งเสียงที่จะใช้\n"
+        "5) /voice → ดูว่าใช้เสียงอะไรอยู่\n"
+        "6) /help → ดูคำสั่ง\n\n"
+        "ตัวอย่าง:\n"
+        "เสียง สวัสดีครับ ทดสอบระบบประกาศดับไฟ\n"
+        "/setvoice English_CalmWoman"
+    )
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    global VOICE_ID
-
     user_text = (event.message.text or "").strip()
+    user_id = _get_user_id(event)
 
-    # ==========================================================
-    # ✅ 2) คำสั่ง /voices (ใส่บนสุด ก่อน if อื่น ๆ) ตามที่คุณสั่ง
-    # ==========================================================
-    if user_text.strip().lower() == "/voices":
+    # ---------- HELP ----------
+    if user_text.lower() in ["/help", "help"]:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=_help_text()))
+        return
+
+    # ---------- SHOW CURRENT VOICE ----------
+    if user_text.lower() == "/voice":
+        current = USER_VOICE.get(user_id) if user_id else None
+        if not current:
+            current = "English_CalmWoman"  # default
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"🔊 voice_id ปัจจุบัน: {current}"))
+        return
+
+    # ---------- SET VOICE ----------
+    if user_text.lower().startswith("/setvoice"):
+        parts = user_text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ใช้แบบนี้: /setvoice <voice_id>"))
+            return
+
+        vid = parts[1].strip()
+        if user_id:
+            USER_VOICE[user_id] = vid
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"✅ ตั้งค่า VOICE_ID แล้ว: {vid}"))
+        return
+
+    # ---------- LIST VOICES ----------
+    if user_text.lower() == "/voices":
         try:
             data = minimax_get_voice_list()
 
-            # รวมรายการเสียงจากหลาย key กัน schema ไม่เหมือน
             voices = []
             for key in ["system_voice", "voice_cloning", "voice_generation", "voices", "data"]:
                 v = data.get(key) if isinstance(data, dict) else None
@@ -260,7 +306,7 @@ def handle_message(event):
             lines = []
             for i, v in enumerate(voices[:10], 1):
                 vid = v.get("voice_id") or v.get("id") or v.get("voiceId")
-                name = v.get("name") or v.get("voice_name") or v.get("title")
+                name = v.get("name") or v.get("voice_name") or v.get("title") or "-"
                 lines.append(f"{i}. {name}\nvoice_id: {vid}")
 
             line_bot_api.reply_message(
@@ -270,74 +316,49 @@ def handle_message(event):
             return
 
         except Exception as e:
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text=f"ดึงรายการเสียงไม่สำเร็จ: {e}")
-            )
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"ดึงรายการเสียงไม่สำเร็จ: {e}"))
             return
 
-    # ✅ ตั้งเสียงโดยไม่ต้องแก้โค้ด
-    if user_text.lower().startswith("/setvoice"):
-        parts = user_text.split(maxsplit=1)
-        if len(parts) < 2:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ใช้แบบนี้: /setvoice <voice_id>"))
-            return
-        VOICE_ID = parts[1].strip()
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"ตั้งค่า VOICE_ID แล้ว ✅\n{VOICE_ID}"))
+    # ---------- OUTAGE TEXT ----------
+    if user_text == "ดับไฟ":
+        today = thai_date(datetime.now())
+        reply = build_outage_template(today)
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
         return
 
-    if user_text.lower() == "/voice":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"VOICE_ID ปัจจุบัน: {VOICE_ID or '(ว่าง)'}"))
-        return
-
-    if user_text.lower() == "/help":
-        msg = (
-            "คำสั่ง:\n"
-            "/voices = ดูรายการเสียง + voice_id (10 รายการแรก)\n"
-            "/setvoice <voice_id> = ตั้งเสียง\n"
-            "/voice = ดูเสียงที่ตั้งอยู่\n\n"
-            "ใช้งาน:\n"
-            "ดับไฟ = ส่งประกาศดับไฟ\n"
-            "เสียง <ข้อความ> = ทำเสียงจากข้อความ\n"
-        )
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
-        return
-
-    # --- คำสั่งทำเสียง ---
-    # ใช้: "เสียง ข้อความ..."
+    # ---------- TTS ----------
     if user_text.startswith("เสียง"):
         text = user_text.replace("เสียง", "", 1).strip()
         if not text:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="พิมพ์แบบนี้ครับ: เสียง สวัสดีครับ ..."))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="พิมพ์แบบนี้ครับ: เสียง สวัสดีครับ ...")
+            )
             return
 
-        # ตอบทันที แล้วค่อย push ลิงก์ไฟล์ตามหลัง
+        # ใช้เสียงที่ผู้ใช้ตั้งไว้ ถ้าไม่มีใช้ default
+        voice_id = USER_VOICE.get(user_id) if user_id else None
+        if not voice_id:
+            voice_id = "English_CalmWoman"
+
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text="⏳ กำลังสร้างเสียงด้วย MiniMax... เดี๋ยวส่งลิงก์ไฟล์ให้ครับ")
+            TextSendMessage(text="⏳ กำลังสร้างเสียงด้วย MiniMax... เดี๋ยวส่งลิงก์ไฟล์ MP3 ให้ครับ")
         )
 
-        user_id = getattr(event.source, "user_id", None)
         if user_id:
-            threading.Thread(target=tts_background_job, args=(user_id, text), daemon=True).start()
-        else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ หา user_id ไม่เจอ (ใช้ในกลุ่มอาจต้องเปิดให้บอทเห็น userId)"))
+            threading.Thread(
+                target=tts_background_job,
+                args=(user_id, text, voice_id),
+                daemon=True
+            ).start()
         return
 
-    # --- ประกาศดับไฟ ---
-    if user_text == "ดับไฟ":
-        reply_text = build_outage_template()
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-        return
-
-    # --- อย่างอื่น ---
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="พิมพ์ /help เพื่อดูคำสั่ง"))
+    # ---------- DEFAULT ----------
+    # ไม่ตอบอะไร (กันรบกวน)
     return
 
-# =============================
-# Start server
-# =============================
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
