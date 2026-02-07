@@ -184,24 +184,55 @@ def minimax_poll_file_id(task_id: str, timeout_sec: int = 180) -> str:
     raise TimeoutError("MiniMax TTS timeout while waiting for file_id")
 
 def minimax_download_mp3(file_id: str) -> bytes:
-    """
-    ✅ แก้ปัญหา “ไฟล์ชื่อ .mp3 แต่ข้างในไม่ใช่เสียง”
-    - ถ้า Content-Type ไม่ใช่ audio/* จะ raise
-    """
+    if not MINIMAX_API_KEY:
+        raise RuntimeError("MINIMAX_API_KEY not set")
+
+    # 1) ขอไฟล์จาก endpoint
     url = f"https://api.minimax.io/v1/files/retrieve_content?file_id={file_id}"
-    headers = {
-        "Authorization": f"Bearer {MINIMAX_API_KEY}",
-    }
+    headers = {"Authorization": f"Bearer {MINIMAX_API_KEY}"}
+
     r = requests.get(url, headers=headers, timeout=120)
     r.raise_for_status()
 
-    content_type = (r.headers.get("Content-Type") or "").lower()
-    if "audio" not in content_type:
-        # ช่วย debug: ตัดข้อความบางส่วนกลับไปให้เห็นว่าได้อะไรมาแทน
-        preview = r.text[:500] if r.text else ""
-        raise RuntimeError(f"Downloaded content is not audio (Content-Type={content_type}). Preview: {preview}")
+    ctype = (r.headers.get("Content-Type") or "").lower()
 
-    return r.content
+    # ✅ ถ้าเป็นเสียงเลย ก็จบ
+    if "audio" in ctype or "mpeg" in ctype:
+        return r.content
+
+    # ❗ ถ้าไม่ใช่ audio ส่วนใหญ่จะเป็น JSON ที่บอก download_url
+    # ลอง parse JSON
+    try:
+        data = r.json()
+    except Exception:
+        # ถ้าไม่ใช่ JSON ก็แปลว่าดาวน์โหลดมาเป็นอย่างอื่น (เช่น HTML error)
+        preview = r.text[:300]
+        raise RuntimeError(f"Downloaded content is not audio (Content-Type={ctype}). Preview: {preview}")
+
+    # หา URL จากหลายชื่อ key กัน schema เปลี่ยน
+    dl_url = (
+        data.get("download_url")
+        or data.get("file_url")
+        or data.get("url")
+        or data.get("data", {}).get("download_url")
+        or data.get("data", {}).get("file_url")
+        or data.get("data", {}).get("url")
+    )
+
+    if not dl_url:
+        raise RuntimeError(f"retrieve_content did not return audio and no download url found: {data}")
+
+    # 2) ไปโหลด mp3 จาก url จริง
+    r2 = requests.get(dl_url, timeout=120)
+    r2.raise_for_status()
+
+    ctype2 = (r2.headers.get("Content-Type") or "").lower()
+    if "audio" not in ctype2 and "mpeg" not in ctype2:
+        preview2 = r2.text[:300]
+        raise RuntimeError(f"Downloaded URL is not audio (Content-Type={ctype2}). Preview: {preview2}")
+
+    return r2.content
+
 
 
 # =========================
@@ -362,3 +393,4 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
