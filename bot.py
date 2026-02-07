@@ -92,7 +92,7 @@ def minimax_create_task(text: str) -> str:
         "text": text,
         "language_boost": "auto",
         "voice_setting": {
-            "voice_id": "Thai_female",      # ถ้าไม่มี ให้เปลี่ยนเป็น voice_id ที่คุณมีใน System Voice ID List
+            "voice_id": "กม7-แยกวังมะเดื่อ",      # ถ้าไม่มี ให้เปลี่ยนเป็น voice_id ที่คุณมีใน System Voice ID List
             "speed": 1,
             "vol": 10,
             "pitch": 1
@@ -214,3 +214,4 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
