@@ -129,7 +129,7 @@ def handle_message(event):
         )
 
     else:
-        reply_text = "พิมพ์ 'ทำเสียงAI เพื่อสร้างเสียงAIด้วยตัวเองผ่านลิ้งที่ส่งมาให้' เพื่อดูคำสั่ง หรือพิมพ์ 'ดับไฟ' เพื่อดูงานดับไฟ"
+        reply_text = "พิมพ์ 'AI' เพื่อทำเสียงAIด้วยตัวเองผ่านลิ้งที่ส่งให้ หรือพิมพ์ 'ดับไฟ' เพื่อดูงานดับไฟ"
 
     line_bot_api.reply_message(
         event.reply_token,
@@ -139,6 +139,7 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
