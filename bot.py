@@ -72,6 +72,24 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
 
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    user_text = event.message.text
+
+    if "ทำเสียงAI" in user_text:
+        reply_text = (
+            "คลิกเพื่อสร้างเสียง AI อัตโนมัติ:\n"
+            "https://www.minimax.io/audio/text-to-speech"
+        )
+
+    else:
+        reply_text = "ทำเสียงAI"
+
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text=reply_text)
+    )
+
 
 
 
