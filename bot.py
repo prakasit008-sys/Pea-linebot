@@ -74,21 +74,24 @@ if __name__ == "__main__":
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    user_text = event.message.text
+    user_text = event.message.text.strip()
 
+    # ✅ คำสั่งทำเสียง AI
     if "ทำเสียงAI" in user_text:
         reply_text = (
-            "คลิกเพื่อสร้างเสียง AI อัตโนมัติ:\n"
+            "🔊 ทำเสียง AI อัตโนมัติ\n"
+            "กดลิงก์นี้ได้เลย:\n"
             "https://www.minimax.io/audio/text-to-speech"
         )
 
     else:
-        reply_text = "AI"
+        reply_text = "พิมพ์ AI เพื่อสร้างเสียงอัตโนมัติ"
 
     line_bot_api.reply_message(
         event.reply_token,
         TextSendMessage(text=reply_text)
     )
+
 
 
 
