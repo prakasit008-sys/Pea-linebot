@@ -75,7 +75,7 @@ def handle_message(event):
         reply_text = (
             "🔊 ทำเสียง AI อัตโนมัติ\n"
             "กดลิงก์นี้ได้เลย:\n"
-            f"{TTS_LINK}"
+            "https://www.minimax.io/audio/text-to-speech"
         )
 
         line_bot_api.reply_message(
@@ -102,4 +102,5 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
