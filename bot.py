@@ -20,8 +20,19 @@ CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
 CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
 
 BASE_URL = os.getenv("BASE_URL", "").rstrip("/")  # เช่น https://pea-linebot.onrender.com
-
 MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
+
+# ✅ เพิ่ม: กัน BASE_URL มีช่องว่าง/ขึ้นบรรทัดใหม่ ทำให้ LINE มองว่าไม่ใช่ https url
+def _clean_base_url(url: str) -> str:
+    u = (url or "").strip().replace("\r", "").replace("\n", "")
+    return u.rstrip("/")
+
+def build_https_url(base_url: str, path: str) -> str:
+    b = _clean_base_url(base_url)
+    p = (path or "").strip()
+    if not p.startswith("/"):
+        p = "/" + p
+    return b + p
 
 # =======================
 # LINE
@@ -82,7 +93,8 @@ def serve_audio(filename):
     if not os.path.exists(fpath):
         abort(404)
 
-    # ✅ เล่นได้ใน LINE/Browser และยังดาวน์โหลดได้
+    # ✅ แก้: as_attachment=False เพื่อให้ LINE/Browser เล่นได้
+    # ยังโหลดได้ปกติ (เปิดลิงก์แล้วเซฟไฟล์ได้ / LINE แชร์/บันทึกได้)
     return send_file(
         fpath,
         mimetype="audio/mpeg",
@@ -158,10 +170,8 @@ def minimax_t2a_sync(text: str, voice_id: str) -> bytes:
 
     audio_hex = (data.get("data") or {}).get("audio")
     if not audio_hex:
-        # แสดงตัวอย่างสั้น ๆ ช่วย debug
         raise RuntimeError(f"MiniMax did not return audio hex. Response: {str(data)[:600]}")
 
-    # ✅ แปลง hex -> bytes (ได้ mp3 bytes)
     try:
         return bytes.fromhex(audio_hex)
     except Exception as e:
@@ -186,27 +196,29 @@ def tts_background_job(target_id: str, text: str, voice_id: str):
         with open(fpath, "wb") as f:
             f.write(mp3_bytes)
 
-        if not BASE_URL:
+        # ✅ แก้: ตรวจ BASE_URL และบังคับ https ให้ LINE ผ่าน
+        cleaned_base = _clean_base_url(BASE_URL)
+        if not cleaned_base.startswith("https://"):
             msg = (
-                "✅ ทำเสียงเสร็จแล้ว 🎧\n"
-                f"แต่ยังไม่ได้ตั้ง BASE_URL เลยส่งเสียงใน LINE ไม่ได้ (ไฟล์ชื่อ {fname})\n"
-                "ให้ไปตั้ง BASE_URL ใน Render Environment แล้ว deploy ใหม่"
+                "❌ ส่งเสียงใน LINE ไม่ได้ เพราะ BASE_URL ต้องเป็น https://...\n"
+                "ไปตั้ง BASE_URL ใน Render ให้เป็นบรรทัดเดียว เช่น:\n"
+                "https://pea-linebot.onrender.com"
             )
             line_bot_api.push_message(target_id, TextSendMessage(text=msg))
             return
 
-        audio_url = f"{BASE_URL}/audio/{fname}"  # ✅ บรรทัดเดียว
+        audio_url = build_https_url(cleaned_base, f"/audio/{fname}")
 
-        # ✅ 1) ส่งเป็นเสียงให้กดฟังได้ทันทีใน LINE
+        # ✅ 1) ส่งเป็นการ์ดเสียง กดฟังได้ทันทีใน LINE
         line_bot_api.push_message(
             target_id,
             AudioSendMessage(
                 original_content_url=audio_url,
-                duration=30000
+                duration=30000  # ถ้าต้องการให้แม่นยำค่อยเพิ่มภายหลังได้
             )
         )
 
-        # ✅ 2) ส่งลิงก์ไว้ให้โหลด/แชร์ด้วย (ตามที่ขอ)
+        # ✅ 2) ส่งลิงก์ไว้ให้ “โหลด” ด้วย (ยังคงโหลดได้ปกติ)
         line_bot_api.push_message(
             target_id,
             TextSendMessage(text=f"ดาวน์โหลดไฟล์ MP3: {audio_url}")
@@ -307,7 +319,7 @@ def handle_message(event):
 
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=f"⏳ กำลังสร้างเสียงด้วย MiniMax (Sync HTTP)...\nVOICE: {CURRENT_VOICE_ID}\nเสร็จแล้วจะส่งเสียงให้ฟังใน LINE ครับ")
+            TextSendMessage(text=f"⏳ กำลังสร้างเสียงด้วย MiniMax (Sync HTTP)...\nVOICE: {CURRENT_VOICE_ID}\nเสร็จแล้วจะส่งเสียงให้ฟังใน LINE และลิงก์โหลดครับ")
         )
 
         if not target_id:
