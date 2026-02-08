@@ -9,7 +9,7 @@ from flask import Flask, request, abort, send_file
 
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage, AudioSendMessage  # ✅ เพิ่ม AudioSendMessage
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, AudioSendMessage  # ✅ เพิ่ม
 
 app = Flask(__name__)
 
@@ -82,7 +82,7 @@ def serve_audio(filename):
     if not os.path.exists(fpath):
         abort(404)
 
-    # ✅ แก้: ไม่บังคับดาวน์โหลด เพื่อให้ LINE เล่นได้
+    # ✅ เล่นได้ใน LINE/Browser และยังดาวน์โหลดได้
     return send_file(
         fpath,
         mimetype="audio/mpeg",
@@ -197,17 +197,20 @@ def tts_background_job(target_id: str, text: str, voice_id: str):
 
         audio_url = f"{BASE_URL}/audio/{fname}"  # ✅ บรรทัดเดียว
 
-        # ✅ ส่งเป็น Audio message: กดฟังใน LINE ได้ทันที
+        # ✅ 1) ส่งเป็นเสียงให้กดฟังได้ทันทีใน LINE
         line_bot_api.push_message(
             target_id,
             AudioSendMessage(
                 original_content_url=audio_url,
-                duration=30000  # ถ้าอยากให้แม่นยำ เดี๋ยวเพิ่ม mutagen ได้
+                duration=30000
             )
         )
 
-        # ✅ ถ้าอยากให้มีลิงก์โหลดด้วย (เปิดได้/แชร์ได้) ให้ปลดคอมเมนต์
-        # line_bot_api.push_message(target_id, TextSendMessage(text=f"ดาวน์โหลดไฟล์ MP3: {audio_url}"))
+        # ✅ 2) ส่งลิงก์ไว้ให้โหลด/แชร์ด้วย (ตามที่ขอ)
+        line_bot_api.push_message(
+            target_id,
+            TextSendMessage(text=f"ดาวน์โหลดไฟล์ MP3: {audio_url}")
+        )
 
     except Exception as e:
         line_bot_api.push_message(target_id, TextSendMessage(text=f"❌ ทำเสียงไม่สำเร็จ: {e}"))
