@@ -339,9 +339,9 @@ def handle_message(event):
     user_text = (event.message.text or "").strip()
     lower = user_text.lower()
 
-    target_id = getattr(event.source, "user_id", None) \
-        or getattr(event.source, "group_id", None) \
-        or getattr(event.source, "room_id", None)
+    target_id = getattr(event.source, "group_id", None) \
+        or getattr(event.source, "room_id", None) \
+        or getattr(event.source, "user_id", None)
 
     # --- help ---
     if lower == "/help":
@@ -441,3 +441,4 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
+
