@@ -3,10 +3,11 @@ import time
 import uuid
 import threading
 import json  # ✅ LOCK: เพิ่ม
+import re
 from datetime import datetime
 
 import requests
-from flask import Flask, request, abort, send_file
+from flask import Flask, request, abort, send_file, Response  # ✅ เพิ่ม Response
 
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -79,12 +80,13 @@ def build_outage_template() -> str:
 # =======================
 # ✅ LOCK: Global voice lock (ทั้งบอท)
 # =======================
-DEFAULT_VOICE_ID = os.getenv("DEFAULT_VOICE_ID", "English_expressive_narrator")
+# ✅ เปลี่ยนเล็กน้อย: ถ้ามี ENV MINIMAX_VOICE_ID ให้ใช้เป็นค่าเริ่มต้นก่อน (กันรีเซ็ต)
+ENV_VOICE_ID = (os.getenv("MINIMAX_VOICE_ID") or "").strip()
+DEFAULT_VOICE_ID = ENV_VOICE_ID if ENV_VOICE_ID else os.getenv("DEFAULT_VOICE_ID", "moss_audio_8688355f-05ad-11f1-a527-12475c8c82b2")
 
 # Render: ถ้ามี Persistent Disk แนะนำตั้ง ENV: SETTINGS_PATH=/var/data/pea_tts_settings.json
 # ถ้ายังไม่มี disk ใช้ /tmp ได้ แต่ redeploy/restart อาจรีเซ็ตค่า
 SETTINGS_PATH = os.getenv("SETTINGS_PATH", "/tmp/pea_tts_settings.json")
-
 _settings_lock = threading.Lock()
 
 def _load_settings() -> dict:
@@ -92,9 +94,13 @@ def _load_settings() -> dict:
         if os.path.exists(SETTINGS_PATH):
             try:
                 with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    # กันไฟล์พัง/ค่าว่าง
+                    vid = (data.get("voice_id") or "").strip()
+                    if vid:
+                        return {"voice_id": vid}
             except Exception:
-                return {"voice_id": DEFAULT_VOICE_ID}
+                pass
         return {"voice_id": DEFAULT_VOICE_ID}
 
 def _save_settings(data: dict) -> None:
@@ -133,6 +139,61 @@ def serve_audio(filename):
         as_attachment=False,
         download_name=filename
     )
+
+# ✅ เพิ่ม: หน้าเล่นเสียงแบบวน (loop)
+@app.route("/play/<path:filename>", methods=["GET"])
+def play_audio_page(filename):
+    # ป้องกัน path แปลกๆ
+    filename = os.path.basename(filename)
+
+    # ถ้าไฟล์ไม่มีอยู่ ให้ 404
+    fpath = os.path.join(AUDIO_DIR, filename)
+    if not os.path.exists(fpath):
+        abort(404)
+
+    html = f"""<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PEA Audio Loop</title>
+  <style>
+    body {{
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      color: #fff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }}
+    .box {{ text-align: center; padding: 24px; }}
+    .title {{ font-size: 16px; opacity: .9; margin-bottom: 10px; }}
+    audio {{ width: min(92vw, 520px); }}
+    .hint {{ margin-top: 12px; font-size: 13px; opacity: .75; line-height: 1.4; }}
+    .links {{ margin-top: 12px; font-size: 13px; opacity: .85; }}
+    .links a {{ color: #7dd3fc; text-decoration: none; }}
+    .links a:hover {{ text-decoration: underline; }}
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="title">🔁 เล่นวนอัตโนมัติ</div>
+    <audio controls autoplay loop>
+      <source src="/audio/{filename}" type="audio/mpeg" />
+    </audio>
+    <div class="hint">
+      มือถือบางรุ่นจะไม่ให้เล่นอัตโนมัติ ต้องกด ▶️ 1 ครั้งก่อน<br/>
+      หลังจากนั้นจะวนเองอัตโนมัติ
+    </div>
+    <div class="links">
+      ดาวน์โหลดไฟล์: <a href="/audio/{filename}">/audio/{filename}</a>
+    </div>
+  </div>
+</body>
+</html>"""
+    return Response(html, mimetype="text/html; charset=utf-8")
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -233,7 +294,9 @@ def tts_background_job(target_id: str, text: str, voice_id: str):
             return
 
         audio_url = build_https_url(cleaned_base, f"/audio/{fname}")
+        play_url = build_https_url(cleaned_base, f"/play/{fname}")  # ✅ เพิ่ม: หน้า loop
 
+        # ส่งเสียงเข้า LINE (เหมือนเดิม)
         line_bot_api.push_message(
             target_id,
             AudioSendMessage(
@@ -242,6 +305,13 @@ def tts_background_job(target_id: str, text: str, voice_id: str):
             )
         )
 
+        # ✅ เพิ่ม: ลิงก์หน้าวนเสียงอัตโนมัติ
+        line_bot_api.push_message(
+            target_id,
+            TextSendMessage(text=f"🔁 เปิดหน้าวนเล่นอัตโนมัติ: {play_url}")
+        )
+
+        # ลิงก์เดิมสำหรับดาวน์โหลด MP3
         line_bot_api.push_message(
             target_id,
             TextSendMessage(text=f"ดาวน์โหลดไฟล์ MP3: {audio_url}")
@@ -257,7 +327,7 @@ def _help_text() -> str:
     return (
         "คำสั่งที่ใช้ได้:\n"
         "1) /help = ดูคำสั่ง\n"
-        "2) /voices = ดูรายการเสียง (10 ตัวอย่าง)\n"
+        "2) /voices = ดูรายการเสียง (ตัวอย่าง)\n"
         "3) /setvoice <voice_id> = ตั้งเสียงที่ใช้ (ล็อคทั้งบอท)\n"
         "4) เสียง <ข้อความ> = สร้างไฟล์ MP3\n"
         "5) ดับไฟ = ส่งประกาศดับไฟ\n\n"
@@ -300,7 +370,7 @@ def handle_message(event):
                 return
 
             lines = []
-            for i, v in enumerate(voices[:50], 1):
+            for i, v in enumerate(voices[:10], 1):
                 vid = v.get("voice_id") or v.get("id") or v.get("voiceId")
                 name = v.get("name") or v.get("voice_name") or v.get("title")
                 lines.append(f"{i}. {name}\nvoice_id: {vid}")
@@ -350,7 +420,7 @@ def handle_message(event):
 
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=f"⏳ กำลังสร้างเสียงด้วย MiniMax (Sync HTTP)...\nVOICE: {voice_id}\nเสร็จแล้วจะส่งเสียงให้ฟังใน LINE และลิงก์โหลดครับ")
+            TextSendMessage(text=f"⏳ กำลังสร้างเสียงด้วย MiniMax (Sync HTTP)...\nVOICE: {voice_id}\nเสร็จแล้วจะส่งเสียงให้ฟังใน LINE และลิงก์วนเล่น/ลิงก์โหลดครับ")
         )
 
         if not target_id:
