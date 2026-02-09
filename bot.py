@@ -2,6 +2,7 @@ import os
 import time
 import uuid
 import threading
+import json  # ✅ LOCK: เพิ่ม
 from datetime import datetime
 
 import requests
@@ -76,9 +77,41 @@ def build_outage_template() -> str:
     )
 
 # =======================
-# Default voice (ปรับได้ด้วย /setvoice)
+# ✅ LOCK: Global voice lock (ทั้งบอท)
 # =======================
-CURRENT_VOICE_ID = os.getenv("DEFAULT_VOICE_ID", "English_expressive_narrator")
+DEFAULT_VOICE_ID = os.getenv("DEFAULT_VOICE_ID", "English_expressive_narrator")
+
+# Render: ถ้ามี Persistent Disk แนะนำตั้ง ENV: SETTINGS_PATH=/var/data/pea_tts_settings.json
+# ถ้ายังไม่มี disk ใช้ /tmp ได้ แต่ redeploy/restart อาจรีเซ็ตค่า
+SETTINGS_PATH = os.getenv("SETTINGS_PATH", "/tmp/pea_tts_settings.json")
+
+_settings_lock = threading.Lock()
+
+def _load_settings() -> dict:
+    with _settings_lock:
+        if os.path.exists(SETTINGS_PATH):
+            try:
+                with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return {"voice_id": DEFAULT_VOICE_ID}
+        return {"voice_id": DEFAULT_VOICE_ID}
+
+def _save_settings(data: dict) -> None:
+    with _settings_lock:
+        parent = os.path.dirname(SETTINGS_PATH)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+def get_voice_id() -> str:
+    return _load_settings().get("voice_id", DEFAULT_VOICE_ID)
+
+def set_voice_id(new_voice_id: str) -> None:
+    data = _load_settings()
+    data["voice_id"] = new_voice_id
+    _save_settings(data)
 
 # =======================
 # Routes
@@ -94,11 +127,10 @@ def serve_audio(filename):
         abort(404)
 
     # ✅ แก้: as_attachment=False เพื่อให้ LINE/Browser เล่นได้
-    # ยังโหลดได้ปกติ (เปิดลิงก์แล้วเซฟไฟล์ได้ / LINE แชร์/บันทึกได้)
     return send_file(
         fpath,
         mimetype="audio/mpeg",
-        as_attachment=False,   # ✅ เปลี่ยน True -> False
+        as_attachment=False,
         download_name=filename
     )
 
@@ -128,14 +160,9 @@ def _minimax_headers():
     }
 
 def _clean_text_for_tts(text: str) -> str:
-    # กันตัวอักษรแปลกที่ทำให้ TTS แป๊ก
     return text.replace("\ufeff", "").replace("\u200b", "").strip()
 
 def minimax_t2a_sync(text: str, voice_id: str) -> bytes:
-    """
-    เรียก MiniMax T2A HTTP (Sync) แล้วได้เสียงกลับมาทันที
-    response ตาม docs: {"data": {"audio": "<hex encoded audio>", "status": ...}, ...}
-    """
     _require_minimax()
 
     url = "https://api.minimax.io/v1/t2a_v2"
@@ -163,7 +190,6 @@ def minimax_t2a_sync(text: str, voice_id: str) -> bytes:
     r.raise_for_status()
     data = r.json()
 
-    # ถ้ามี base_resp ก็เช็ค
     base_resp = data.get("base_resp") or {}
     if base_resp.get("status_code") not in (None, 0, "0"):
         raise RuntimeError(f"MiniMax error {base_resp.get('status_code')}: {base_resp.get('status_msg')}")
@@ -185,7 +211,7 @@ def minimax_get_voice_list() -> dict:
     return r.json()
 
 # =======================
-# Background job (Sync call แต่ทำใน thread กัน webhook timeout)
+# Background job
 # =======================
 def tts_background_job(target_id: str, text: str, voice_id: str):
     try:
@@ -196,7 +222,6 @@ def tts_background_job(target_id: str, text: str, voice_id: str):
         with open(fpath, "wb") as f:
             f.write(mp3_bytes)
 
-        # ✅ แก้: ตรวจ BASE_URL และบังคับ https ให้ LINE ผ่าน
         cleaned_base = _clean_base_url(BASE_URL)
         if not cleaned_base.startswith("https://"):
             msg = (
@@ -209,16 +234,14 @@ def tts_background_job(target_id: str, text: str, voice_id: str):
 
         audio_url = build_https_url(cleaned_base, f"/audio/{fname}")
 
-        # ✅ 1) ส่งเป็นการ์ดเสียง กดฟังได้ทันทีใน LINE
         line_bot_api.push_message(
             target_id,
             AudioSendMessage(
                 original_content_url=audio_url,
-                duration=30000  # ถ้าต้องการให้แม่นยำค่อยเพิ่มภายหลังได้
+                duration=30000
             )
         )
 
-        # ✅ 2) ส่งลิงก์ไว้ให้ “โหลด” ด้วย (ยังคงโหลดได้ปกติ)
         line_bot_api.push_message(
             target_id,
             TextSendMessage(text=f"ดาวน์โหลดไฟล์ MP3: {audio_url}")
@@ -235,20 +258,17 @@ def _help_text() -> str:
         "คำสั่งที่ใช้ได้:\n"
         "1) /help = ดูคำสั่ง\n"
         "2) /voices = ดูรายการเสียง (10 ตัวอย่าง)\n"
-        "3) /setvoice <voice_id> = ตั้งเสียงที่ใช้\n"
+        "3) /setvoice <voice_id> = ตั้งเสียงที่ใช้ (ล็อคทั้งบอท)\n"
         "4) เสียง <ข้อความ> = สร้างไฟล์ MP3\n"
         "5) ดับไฟ = ส่งประกาศดับไฟ\n\n"
-        f"VOICE ปัจจุบัน: {CURRENT_VOICE_ID}"
+        f"VOICE ปัจจุบัน: {get_voice_id()}"
     )
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    global CURRENT_VOICE_ID
-
     user_text = (event.message.text or "").strip()
     lower = user_text.lower()
 
-    # ส่งกลับไปที่ user/group/room ให้ถูก
     target_id = getattr(event.source, "user_id", None) \
         or getattr(event.source, "group_id", None) \
         or getattr(event.source, "room_id", None)
@@ -295,14 +315,23 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"ดึงรายการเสียงไม่สำเร็จ: {e}"))
             return
 
-    # --- setvoice ---
+    # --- setvoice (ล็อคทั้งบอท) ---
     if lower.startswith("/setvoice"):
         parts = user_text.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="วิธีใช้: /setvoice <voice_id>"))
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=f"วิธีใช้: /setvoice <voice_id>\nเสียงปัจจุบัน: {get_voice_id()}")
+            )
             return
-        CURRENT_VOICE_ID = parts[1].strip()
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"ตั้งค่า VOICE_ID แล้ว ✅\n{CURRENT_VOICE_ID}"))
+
+        new_voice = parts[1].strip()
+        set_voice_id(new_voice)
+
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"ตั้งค่า VOICE_ID (ล็อคทั้งบอท) แล้ว ✅\n{new_voice}")
+        )
         return
 
     # --- outage ---
@@ -317,9 +346,11 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="พิมพ์แบบนี้ครับ: เสียง สวัสดีครับ ..."))
             return
 
+        voice_id = get_voice_id()
+
         line_bot_api.reply_message(
             event.reply_token,
-            TextSendMessage(text=f"⏳ กำลังสร้างเสียงด้วย MiniMax (Sync HTTP)...\nVOICE: {CURRENT_VOICE_ID}\nเสร็จแล้วจะส่งเสียงให้ฟังใน LINE และลิงก์โหลดครับ")
+            TextSendMessage(text=f"⏳ กำลังสร้างเสียงด้วย MiniMax (Sync HTTP)...\nVOICE: {voice_id}\nเสร็จแล้วจะส่งเสียงให้ฟังใน LINE และลิงก์โหลดครับ")
         )
 
         if not target_id:
@@ -327,7 +358,7 @@ def handle_message(event):
 
         threading.Thread(
             target=tts_background_job,
-            args=(target_id, text, CURRENT_VOICE_ID),
+            args=(target_id, text, voice_id),
             daemon=True
         ).start()
         return
