@@ -24,10 +24,32 @@ CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", "")
 BASE_URL = os.getenv("BASE_URL", "").rstrip("/")  # เช่น https://pea-linebot.onrender.com
 MINIMAX_API_KEY = os.getenv("MINIMAX_API_KEY", "")
 
+# =======================
+# ✅ Admin / Limits (เพิ่มตามที่ขอ)
+# =======================
+# ใส่ userId ของแอดมิน คั่นด้วยคอมม่า เช่น "Uxxx,Uyyy"
+ADMIN_USER_IDS = set([u.strip() for u in os.getenv("ADMIN_USER_IDS", "").split(",") if u.strip()])
+
+# จำกัดความยาวข้อความ TTS
+MAX_TTS_CHARS = int(os.getenv("MAX_TTS_CHARS", "1200"))
+
+# อายุไฟล์เสียงที่เก็บไว้ (วินาที) ค่าเริ่มต้น 6 ชั่วโมง
+AUDIO_MAX_AGE_SEC = int(os.getenv("AUDIO_MAX_AGE_SEC", str(6 * 3600)))
+
+
+def is_admin(event) -> bool:
+    """ถ้าไม่ตั้ง ADMIN_USER_IDS เลย -> อนุญาตทุกคน (กันล็อคตัวเองตอนเริ่ม)"""
+    uid = getattr(event.source, "user_id", "") or ""
+    if not ADMIN_USER_IDS:
+        return True
+    return uid in ADMIN_USER_IDS
+
+
 # ✅ เพิ่ม: กัน BASE_URL มีช่องว่าง/ขึ้นบรรทัดใหม่ ทำให้ LINE มองว่าไม่ใช่ https url
 def _clean_base_url(url: str) -> str:
     u = (url or "").strip().replace("\r", "").replace("\n", "")
     return u.rstrip("/")
+
 
 def build_https_url(base_url: str, path: str) -> str:
     b = _clean_base_url(base_url)
@@ -35,6 +57,7 @@ def build_https_url(base_url: str, path: str) -> str:
     if not p.startswith("/"):
         p = "/" + p
     return b + p
+
 
 # =======================
 # LINE
@@ -48,6 +71,29 @@ handler = WebhookHandler(CHANNEL_SECRET)
 AUDIO_DIR = "/tmp/audio"
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
+
+# =======================
+# ✅ เพิ่ม: ลบไฟล์ mp3 เก่าอัตโนมัติ (กันดิสก์เต็ม)
+# =======================
+def cleanup_old_audio(max_age_sec: int = 6 * 3600):
+    """ลบไฟล์ mp3 ที่เก่ากว่า max_age_sec"""
+    try:
+        now = time.time()
+        for fn in os.listdir(AUDIO_DIR):
+            if not fn.lower().endswith(".mp3"):
+                continue
+            fp = os.path.join(AUDIO_DIR, fn)
+            if not os.path.isfile(fp):
+                continue
+            try:
+                if now - os.path.getmtime(fp) > max_age_sec:
+                    os.remove(fp)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 # =======================
 # Thai date helpers
 # =======================
@@ -57,9 +103,11 @@ THAI_MONTHS = [
     "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
 ]
 
+
 def thai_date(d: datetime) -> str:
     year_th = d.year + 543
     return f"{d.day} {THAI_MONTHS[d.month]} {year_th}"
+
 
 def build_outage_template() -> str:
     return (
@@ -77,17 +125,21 @@ def build_outage_template() -> str:
         "📍 ดับตั้งแต่ สวนขวัญ ตลาดนัดสวนขวัญ โรงนมสวนขวัญ และปั้ม PT"
     )
 
+
 # =======================
 # ✅ LOCK: Global voice lock (ทั้งบอท)
 # =======================
 # ✅ เปลี่ยนเล็กน้อย: ถ้ามี ENV MINIMAX_VOICE_ID ให้ใช้เป็นค่าเริ่มต้นก่อน (กันรีเซ็ต)
 ENV_VOICE_ID = (os.getenv("MINIMAX_VOICE_ID") or "").strip()
-DEFAULT_VOICE_ID = ENV_VOICE_ID if ENV_VOICE_ID else os.getenv("DEFAULT_VOICE_ID", "moss_audio_8688355f-05ad-11f1-a527-12475c8c82b2")
+DEFAULT_VOICE_ID = ENV_VOICE_ID if ENV_VOICE_ID else os.getenv(
+    "DEFAULT_VOICE_ID", "moss_audio_8688355f-05ad-11f1-a527-12475c8c82b2"
+)
 
 # Render: ถ้ามี Persistent Disk แนะนำตั้ง ENV: SETTINGS_PATH=/var/data/pea_tts_settings.json
 # ถ้ายังไม่มี disk ใช้ /tmp ได้ แต่ redeploy/restart อาจรีเซ็ตค่า
 SETTINGS_PATH = os.getenv("SETTINGS_PATH", "/tmp/pea_tts_settings.json")
 _settings_lock = threading.Lock()
+
 
 def _load_settings() -> dict:
     with _settings_lock:
@@ -103,6 +155,7 @@ def _load_settings() -> dict:
                 pass
         return {"voice_id": DEFAULT_VOICE_ID}
 
+
 def _save_settings(data: dict) -> None:
     with _settings_lock:
         parent = os.path.dirname(SETTINGS_PATH)
@@ -111,13 +164,16 @@ def _save_settings(data: dict) -> None:
         with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
+
 def get_voice_id() -> str:
     return _load_settings().get("voice_id", DEFAULT_VOICE_ID)
+
 
 def set_voice_id(new_voice_id: str) -> None:
     data = _load_settings()
     data["voice_id"] = new_voice_id
     _save_settings(data)
+
 
 # =======================
 # Routes
@@ -126,8 +182,12 @@ def set_voice_id(new_voice_id: str) -> None:
 def home():
     return "OK", 200
 
+
 @app.route("/audio/<filename>", methods=["GET"])
 def serve_audio(filename):
+    # ✅ เพิ่มเล็กน้อย: กัน path แปลกๆ
+    filename = os.path.basename(filename)
+
     fpath = os.path.join(AUDIO_DIR, filename)
     if not os.path.exists(fpath):
         abort(404)
@@ -139,6 +199,7 @@ def serve_audio(filename):
         as_attachment=False,
         download_name=filename
     )
+
 
 # ✅ เพิ่ม: หน้าเล่นเสียงแบบวน (loop)
 @app.route("/play/<path:filename>", methods=["GET"])
@@ -195,6 +256,7 @@ def play_audio_page(filename):
 </html>"""
     return Response(html, mimetype="text/html; charset=utf-8")
 
+
 @app.route("/callback", methods=["POST"])
 def callback():
     signature = request.headers.get("X-Line-Signature", "")
@@ -207,6 +269,7 @@ def callback():
 
     return "OK"
 
+
 # =======================
 # MiniMax (Sync T2A HTTP)
 # =======================
@@ -214,14 +277,17 @@ def _require_minimax():
     if not MINIMAX_API_KEY:
         raise RuntimeError("MINIMAX_API_KEY not set")
 
+
 def _minimax_headers():
     return {
         "Authorization": f"Bearer {MINIMAX_API_KEY}",
         "Content-Type": "application/json",
     }
 
+
 def _clean_text_for_tts(text: str) -> str:
     return text.replace("\ufeff", "").replace("\u200b", "").strip()
+
 
 def minimax_t2a_sync(text: str, voice_id: str) -> bytes:
     _require_minimax()
@@ -264,6 +330,7 @@ def minimax_t2a_sync(text: str, voice_id: str) -> bytes:
     except Exception as e:
         raise RuntimeError(f"Failed to decode audio hex: {e}")
 
+
 def minimax_get_voice_list() -> dict:
     _require_minimax()
     url = "https://api.minimax.io/v1/get_voice"
@@ -271,11 +338,15 @@ def minimax_get_voice_list() -> dict:
     r.raise_for_status()
     return r.json()
 
+
 # =======================
 # Background job
 # =======================
 def tts_background_job(target_id: str, text: str, voice_id: str):
     try:
+        # ✅ เพิ่ม: ลบไฟล์เก่า ป้องกันดิสก์เต็ม
+        cleanup_old_audio(AUDIO_MAX_AGE_SEC)
+
         mp3_bytes = minimax_t2a_sync(text, voice_id=voice_id)
 
         fname = f"{uuid.uuid4().hex}.mp3"
@@ -320,6 +391,7 @@ def tts_background_job(target_id: str, text: str, voice_id: str):
     except Exception as e:
         line_bot_api.push_message(target_id, TextSendMessage(text=f"❌ ทำเสียงไม่สำเร็จ: {e}"))
 
+
 # =======================
 # Message handler
 # =======================
@@ -328,11 +400,15 @@ def _help_text() -> str:
         "คำสั่งที่ใช้ได้:\n"
         "1) /help = ดูคำสั่ง\n"
         "2) /voices = ดูรายการเสียง (ตัวอย่าง)\n"
-        "3) /setvoice <voice_id> = ตั้งเสียงที่ใช้ (ล็อคทั้งบอท)\n"
-        "4) เสียง <ข้อความ> = สร้างไฟล์ MP3\n"
-        "5) ดับไฟ = ส่งประกาศดับไฟ\n\n"
-        f"VOICE ปัจจุบัน: {get_voice_id()}"
+        "3) /setvoice <voice_id> = ตั้งเสียงที่ใช้ (ล็อคทั้งบอท) [แอดมิน]\n"
+        "4) /myid = ดู userId ของตัวเอง\n"
+        "5) เสียง <ข้อความ> = สร้างไฟล์ MP3\n"
+        "6) ดับไฟ = ส่งประกาศดับไฟ\n\n"
+        f"VOICE ปัจจุบัน: {get_voice_id()}\n"
+        f"MAX_TTS_CHARS: {MAX_TTS_CHARS}\n"
+        f"AUDIO_MAX_AGE_SEC: {AUDIO_MAX_AGE_SEC}"
     )
+
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
@@ -346,6 +422,12 @@ def handle_message(event):
     # --- help ---
     if lower == "/help":
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=_help_text()))
+        return
+
+    # ✅ เพิ่ม: ดู userId ของตัวเอง (เอาไว้ตั้ง ADMIN_USER_IDS)
+    if lower == "/myid":
+        uid = getattr(event.source, "user_id", "") or "unknown"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"Your userId:\n{uid}"))
         return
 
     # --- voices ---
@@ -387,6 +469,11 @@ def handle_message(event):
 
     # --- setvoice (ล็อคทั้งบอท) ---
     if lower.startswith("/setvoice"):
+        # ✅ เพิ่ม: จำกัดเฉพาะแอดมิน
+        if not is_admin(event):
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ คำสั่งนี้สำหรับแอดมินเท่านั้น"))
+            return
+
         parts = user_text.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():
             line_bot_api.reply_message(
@@ -416,6 +503,15 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="พิมพ์แบบนี้ครับ: เสียง สวัสดีครับ ..."))
             return
 
+        # ✅ เพิ่ม: จำกัดความยาวข้อความ
+        if len(text) > MAX_TTS_CHARS:
+            text = text[:MAX_TTS_CHARS].rstrip()
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=f"⚠️ ข้อความยาวเกินไป ตัดเหลือ {MAX_TTS_CHARS} ตัวอักษรแล้วกำลังทำเสียงให้ครับ")
+            )
+            # ไม่ return เพื่อให้ทำเสียงต่อได้
+
         voice_id = get_voice_id()
 
         line_bot_api.reply_message(
@@ -435,10 +531,10 @@ def handle_message(event):
 
     return
 
+
 # =======================
 # Main
 # =======================
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
-
