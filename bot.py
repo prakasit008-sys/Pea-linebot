@@ -4,6 +4,8 @@ import uuid
 import threading
 import json  # ✅ LOCK: เพิ่ม
 import re
+import csv
+import io
 from datetime import datetime
 
 import requests
@@ -36,11 +38,21 @@ MAX_TTS_CHARS = int(os.getenv("MAX_TTS_CHARS", "1200"))
 # อายุไฟล์เสียงที่เก็บไว้ (วินาที) ค่าเริ่มต้น 6 ชั่วโมง
 AUDIO_MAX_AGE_SEC = int(os.getenv("AUDIO_MAX_AGE_SEC", str(6 * 3600)))
 
+# =======================
+# ✅ NEW: Google Sheet CSV (สำหรับคำสั่ง "ดับไฟ")
+# =======================
+# แนะนำให้ตั้งใน Render ENV: SHEET_CSV_URL
+# ถ้าไม่ตั้ง จะใช้ค่า default ตามลิงก์ของคุณ
+SHEET_CSV_URL = (os.getenv(
+    "SHEET_CSV_URL",
+    "https://docs.google.com/spreadsheets/d/e/2PACX-1vTdIw6eIvTIrqS1PHxG8HKOiAlF5DISu1MfA_Uq4-mD-mECnb-ojFfDMlbpTtr4GZSF8JGSHhJj1hhO/pub?gid=0&single=true&output=csv"
+) or "").strip()
+
 
 def is_admin(event) -> bool:
     """ถ้าไม่ตั้ง ADMIN_USER_IDS เลย -> อนุญาตทุกคน (กันล็อคตัวเองตอนเริ่ม)"""
     uid = getattr(event.source, "user_id", "") or ""
-    if not ADMIN_USER_IDS:
+    if not ADMIN_USER_IDS:Uf8d1dd32d0238a0f7874f98b86e3e75c
         return True
     return uid in ADMIN_USER_IDS
 
@@ -124,6 +136,71 @@ def build_outage_template() -> str:
         "⏰ เวลา 08:30 - 17:00 น.\n"
         "📍 ดับตั้งแต่ สวนขวัญ ตลาดนัดสวนขวัญ โรงนมสวนขวัญ และปั้ม PT"
     )
+
+
+# =======================
+# ✅ NEW: อ่าน Google Sheet CSV แล้วสร้างข้อความประกาศ
+# =======================
+def fetch_outages_from_sheet() -> list:
+    """
+    อ่าน CSV จาก Google Sheet ที่ publish แล้ว (SHEET_CSV_URL)
+    คาดว่าหัวคอลัมน์: date, start, end, area, detail, status
+    """
+    if not SHEET_CSV_URL:
+        return []
+
+    r = requests.get(SHEET_CSV_URL, timeout=20)
+    r.raise_for_status()
+
+    # utf-8-sig กัน BOM
+    text = r.content.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+
+    rows = []
+    for row in reader:
+        if not row:
+            continue
+        clean = {(k or "").strip(): (v or "").strip() for k, v in row.items()}
+        if clean.get("date"):  # กันแถวว่าง
+            rows.append(clean)
+    return rows
+
+
+def build_outage_reply_from_sheet(rows: list) -> str:
+    # กรองเฉพาะ status=active
+    active = [r for r in rows if (r.get("status", "").strip().lower() == "active")]
+
+    if not active:
+        return "✅ ตอนนี้ไม่มีรายการดับไฟ (status=active) ใน Google Sheet"
+
+    # เรียงตาม date แล้ว start
+    active.sort(key=lambda r: (r.get("date", ""), r.get("start", "")))
+
+    lines = ["📢 งานดับไฟแผนกปฏิบัติการ\n"]
+    current_date = None
+
+    for r in active:
+        d = r.get("date", "")
+        start = r.get("start", "")
+        end = r.get("end", "")
+        area = r.get("area", "")
+        detail = r.get("detail", "")
+
+        # คั่นวัน
+        if d != current_date:
+            if current_date is not None:
+                lines.append("******************************")
+            lines.append(f"📅 วันที่ {d}")
+            current_date = d
+
+        # รายละเอียดรายการ
+        lines.append(f"⏰ เวลา {start} - {end} น.")
+        if area:
+            lines.append(f"📍 {area}")
+        if detail:
+            lines.append(f"{detail}")
+
+    return "\n".join(lines).strip()
 
 
 # =======================
@@ -493,7 +570,18 @@ def handle_message(event):
 
     # --- outage ---
     if user_text == "ดับไฟ":
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=build_outage_template()))
+        # ✅ NEW: ดึงข้อมูลจาก Google Sheet CSV ก่อน (ถ้าพัง/ว่างค่อย fallback)
+        try:
+            rows = fetch_outages_from_sheet()
+            msg = build_outage_reply_from_sheet(rows)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=msg))
+        except Exception as e:
+            # fallback ไป template เดิม (กันระบบล่ม)
+            fallback = build_outage_template()
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=f"⚠️ อ่านชีตไม่สำเร็จ ใช้ข้อความสำรองแทน\nเหตุผล: {e}\n\n{fallback}")
+            )
         return
 
     # --- tts ---
