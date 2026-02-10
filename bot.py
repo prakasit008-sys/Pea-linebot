@@ -52,7 +52,7 @@ SHEET_CSV_URL = (os.getenv(
 def is_admin(event) -> bool:
     """ถ้าไม่ตั้ง ADMIN_USER_IDS เลย -> อนุญาตทุกคน (กันล็อคตัวเองตอนเริ่ม)"""
     uid = getattr(event.source, "user_id", "") or ""
-    if not ADMIN_USER_IDS:Uf8d1dd32d0238a0f7874f98b86e3e75c
+    if not ADMIN_USER_IDS:
         return True
     return uid in ADMIN_USER_IDS
 
@@ -626,3 +626,4 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
+
