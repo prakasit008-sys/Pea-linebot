@@ -619,6 +619,67 @@ def handle_message(event):
 
     return
 
+# =======================
+# ✅ NEW: MiniMax Control Panel
+# =======================
+
+def get_minimax_credit():
+    """ดึงเครดิตคงเหลือจาก MiniMax"""
+    try:
+        url = "https://api.minimax.io/v1/user/balance"
+        r = requests.get(url, headers=_minimax_headers(), timeout=10)
+        data = r.json()
+        return (
+            data.get("credit_balance")
+            or data.get("balance")
+            or data.get("data", {}).get("credit_balance")
+            or "ไม่พบข้อมูล"
+        )
+    except Exception as e:
+        return f"เช็คไม่ได้: {e}"
+
+
+@app.route("/control", methods=["GET"])
+def control_panel():
+    credit = get_minimax_credit()
+    voice_now = get_voice_id()
+
+    html = f"""
+    <h2>🎛 MiniMax Control Panel</h2>
+
+    <h3>💳 เครดิต MiniMax คงเหลือ</h3>
+    <p>{credit}</p>
+
+    <h3>🔊 เสียงที่ใช้ตอนนี้</h3>
+    <p>{voice_now}</p>
+
+    <hr>
+    <h3>เปลี่ยนเสียง (ล็อคทั้งบอท)</h3>
+
+    <a href="/control/setvoice?voice=moss_audio_8688355f-05ad-11f1-a527-12475c8c82b2">✅ เสียงหญิง ทางการ (แนะนำ)</a><br><br>
+    <a href="/control/setvoice?voice=moss_audio_f331f5cd-0765-11f1-97b2-4a198ffa3af2">เสียงประยุท</a><br><br>
+    <a href="/control/setvoice?voice=Thai_female_news">เสียงข่าว</a><br><br>
+    <a href="/control/setvoice?voice=Thai_female_soft">เสียงนุ่มนวล</a><br><br>
+
+    <hr>
+    <p>รีเฟรชหน้าเพื่อดูเครดิตล่าสุด</p>
+    """
+    return Response(html, mimetype="text/html; charset=utf-8")
+
+
+@app.route("/control/setvoice", methods=["GET"])
+def control_set_voice():
+    new_voice = request.args.get("voice", "").strip()
+    if not new_voice:
+        return "ไม่พบ voice_id"
+
+    set_voice_id(new_voice)
+
+    return f"""
+    เปลี่ยนเสียงเรียบร้อยแล้ว ✅<br>
+    voice_id: {new_voice}<br><br>
+    <a href="/control">⬅ กลับหน้า Control Panel</a>
+    """
 
 # =======================
 # Main
@@ -626,4 +687,5 @@ def handle_message(event):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
+
 
