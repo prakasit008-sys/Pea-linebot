@@ -658,7 +658,7 @@ def control_panel():
 
     <a href="/control/setvoice?voice=moss_audio_8688355f-05ad-11f1-a527-12475c8c82b2">✅ เสียงหญิง ทางการ (แนะนำ)</a><br><br>
     <a href="/control/setvoice?voice=moss_audio_f331f5cd-0765-11f1-97b2-4a198ffa3af2">เสียงประยุท</a><br><br>
-    <a href="/control/setvoice?voice=Thai_female_news">เสียงข่าว</a><br><br>
+    <a href="/control/setvoice?voice=moss_audio_9de89af5-eb0d-11f0-a584-feb883fa2cc8">เสียงแอดมินปาม</a><br><br>
     <a href="/control/setvoice?voice=Thai_female_soft">เสียงนุ่มนวล</a><br><br>
 
     <hr>
@@ -687,5 +687,6 @@ def control_set_voice():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     app.run(host="0.0.0.0", port=port)
+
 
 
