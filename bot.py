@@ -656,10 +656,10 @@ def control_panel():
     <hr>
     <h3>เปลี่ยนเสียง (ล็อคทั้งบอท)</h3>
 
-    <a href="/control/setvoice?voice=moss_audio_8688355f-05ad-11f1-a527-12475c8c82b2">✅ เสียงหญิง ทางการ (แนะนำ)</a><br><br>
+    <a href="/control/setvoice?voice=moss_audio_8688355f-05ad-11f1-a527-12475c8c82b2">✅ เสียงหญิง แบ๋วๆ</a><br><br>
     <a href="/control/setvoice?voice=moss_audio_f331f5cd-0765-11f1-97b2-4a198ffa3af2">เสียงประยุท</a><br><br>
     <a href="/control/setvoice?voice=moss_audio_9de89af5-eb0d-11f0-a584-feb883fa2cc8">เสียงแอดมินปาม</a><br><br>
-    <a href="/control/setvoice?voice=Thai_female_soft">เสียงนุ่มนวล</a><br><br>
+    <a href="/control/setvoice?voice=moss_audio_b2d479cd-3cd8-11f1-a34e-be827e93647d">เสียงผู้หญิงอัพเดท</a><br><br>
 
     <hr>
     <p>รีเฟรชหน้าเพื่อดูเครดิตล่าสุด</p>
