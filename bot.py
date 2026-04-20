@@ -209,7 +209,7 @@ def build_outage_reply_from_sheet(rows: list) -> str:
 # ✅ เปลี่ยนเล็กน้อย: ถ้ามี ENV MINIMAX_VOICE_ID ให้ใช้เป็นค่าเริ่มต้นก่อน (กันรีเซ็ต)
 ENV_VOICE_ID = (os.getenv("MINIMAX_VOICE_ID") or "").strip()
 DEFAULT_VOICE_ID = ENV_VOICE_ID if ENV_VOICE_ID else os.getenv(
-    "DEFAULT_VOICE_ID", "moss_audio_8688355f-05ad-11f1-a527-12475c8c82b2"
+    "DEFAULT_VOICE_ID", "moss_audio_f331f5cd-0765-11f1-97b2-4a198ffa3af2"
 )
 
 # Render: ถ้ามี Persistent Disk แนะนำตั้ง ENV: SETTINGS_PATH=/var/data/pea_tts_settings.json
